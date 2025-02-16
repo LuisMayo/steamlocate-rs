@@ -2,8 +2,17 @@ use std::path::PathBuf;
 
 use crate::Result;
 
-pub fn locate_steam_dir() -> Result<PathBuf> {
-    locate_steam_dir_helper()
+pub fn locate_steam_dir() -> Result<Vec<PathBuf>> {
+    #[cfg(target_os = "linux")]
+    return locate_steam_dir_helper();
+    #[cfg(not(target_os = "linux"))]
+    {
+        let result = locate_steam_dir_helper();
+        match result {
+            Ok(path) => Ok(vec![path]),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -58,10 +67,10 @@ fn locate_steam_dir_helper() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn locate_steam_dir_helper() -> Result<PathBuf> {
+fn locate_steam_dir_helper() -> Result<Vec<PathBuf>> {
     use std::env;
 
-    use crate::error::{Error, LocateError, ValidationError};
+    use crate::error::{Error, LocateError};
 
     // Steam's installation location is pretty easy to find on Linux, too, thanks to the symlink in $USER
     let home_dir = home::home_dir().ok_or_else(|| Error::locate(LocateError::no_home()))?;
@@ -79,15 +88,17 @@ fn locate_steam_dir_helper() -> Result<PathBuf> {
         home_dir.join(".local/share/Steam"),
         home_dir.join(".steam/steam"),
         home_dir.join(".steam/root"),
-        home_dir.join(".steam"),
         // Snap steam install directories
         snap_dir.join("steam/common/.local/share/Steam"),
         snap_dir.join("steam/common/.steam/steam"),
         snap_dir.join("steam/common/.steam/root"),
     ];
-
-    steam_paths
+    let mut existing_paths: Vec<PathBuf> = steam_paths
         .into_iter()
-        .find(|x| x.is_dir())
-        .ok_or_else(|| Error::validation(ValidationError::missing_dir()))
+        .map(|path| path.read_link().unwrap_or(path))
+        .filter(|x| x.is_dir())
+        .collect();
+    existing_paths.sort();
+    existing_paths.dedup();
+    Ok(existing_paths)
 }
